@@ -41,6 +41,7 @@ from open_webui.models.users import UserModel
 from open_webui.utils.access_control import check_model_access, has_connection_access, has_permission
 from open_webui.utils.anthropic import ANTHROPIC_VERSION, get_anthropic_models, is_anthropic_url
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.aws_sigv4 import is_sigv4, sign_request
 from open_webui.utils.headers import get_headers_and_cookies, include_user_info_headers
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.misc import convert_logit_bias_input_to_json, get_provider_function, merge_tool_call_batches
@@ -101,6 +102,9 @@ async def send_get_request(
 
                 if ENABLE_FORWARD_USER_INFO_HEADERS and user:
                     headers = include_user_info_headers(headers, user, request=request)
+
+            if is_sigv4(config):
+                headers = sign_request(method='GET', url=url, headers=headers, body=None, config=config)
 
             async with session.get(
                 url,
@@ -537,11 +541,15 @@ async def speech(request: Request, user=Depends(get_verified_user)):
 
         headers, cookies = await get_headers_and_cookies(request, url, key, api_config, user=user)
 
+        speech_url = f'{url}/audio/speech'
+        if is_sigv4(api_config):
+            headers = sign_request(method='POST', url=speech_url, headers=headers, body=body, config=api_config)
+
         r = None
         try:
             session = await get_session()
             r = await session.post(
-                url=f'{url}/audio/speech',
+                url=speech_url,
                 data=body,
                 headers=headers,
                 cookies=cookies,
@@ -810,8 +818,14 @@ async def get_models(request: Request, url_idx: int | None = None, user=Depends(
                     if models is None:
                         raise Exception('Failed to connect to Anthropic API')
                 else:
+                    models_url = f'{url}/models'
+                    if is_sigv4(api_config):
+                        headers = sign_request(
+                            method='GET', url=models_url, headers=headers, body=None, config=api_config
+                        )
+
                     async with session.get(
-                        f'{url}/models',
+                        models_url,
                         headers=headers,
                         cookies=cookies,
                         ssl=AIOHTTP_CLIENT_SESSION_SSL,
@@ -1036,8 +1050,12 @@ async def verify_connection(
                     raise HTTPException(status_code=500, detail=result['error'])
                 return result
             else:
+                verify_url = f'{url}/models'
+                if is_sigv4(api_config):
+                    headers = sign_request(method='GET', url=verify_url, headers=headers, body=None, config=api_config)
+
                 async with session.get(
-                    f'{url}/models',
+                    verify_url,
                     headers=headers,
                     cookies=cookies,
                     ssl=AIOHTTP_CLIENT_SESSION_SSL,
@@ -1579,6 +1597,9 @@ async def generate_chat_completion(
     streaming = False
     response = None
 
+    if is_sigv4(api_config):
+        headers = sign_request(method='POST', url=request_url, headers=headers, body=payload, config=api_config)
+
     try:
         session = await get_session()
 
@@ -1737,6 +1758,9 @@ async def embeddings(request: Request, form_data: dict, user):
         embeddings_url = f'{url}/embeddings'
     requested_model = form_data.get('model')
 
+    if is_sigv4(api_config):
+        headers = sign_request(method='POST', url=embeddings_url, headers=headers, body=body, config=api_config)
+
     try:
         session = await get_session()
         r = await session.request(
@@ -1866,6 +1890,9 @@ async def responses(
                 request_url = f'{url}/openai/deployments/{model}/responses?api-version={api_version}'
         else:
             request_url = f'{url}/responses'
+
+        if is_sigv4(api_config):
+            headers = sign_request(method='POST', url=request_url, headers=headers, body=body, config=api_config)
 
         session = await get_session()
         r = await session.request(

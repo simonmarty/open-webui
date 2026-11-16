@@ -31,10 +31,16 @@
 
 	export let connection: any = null;
 
+	const DEFAULT_AWS_REGION = 'us-east-1';
+	const DEFAULT_AWS_SIGNING_SERVICE = 'bedrock';
+
 	let url = '';
 	let key = '';
 	let auth_type = 'bearer';
 	let forwardCookies = false;
+
+	let awsRegion = DEFAULT_AWS_REGION;
+	let awsSigningService = DEFAULT_AWS_SIGNING_SERVICE;
 
 	let connectionType = 'external';
 	let provider = '';
@@ -66,6 +72,14 @@
 			.split(',')
 			.map((param) => param.trim())
 			.filter(Boolean);
+
+	const sigv4Config = () =>
+		auth_type === 'sigv4'
+			? {
+					aws_region: awsRegion.trim(),
+					aws_signing_service: awsSigningService.trim()
+				}
+			: {};
 
 	const verifyOllamaHandler = async () => {
 		// remove trailing slash from url
@@ -103,10 +117,29 @@
 		}
 	};
 
+	const missingSigv4Field = () => {
+		if (auth_type !== 'sigv4') {
+			return null;
+		}
+		if (!awsRegion.trim()) {
+			return $i18n.t('AWS Region is required for SigV4 authentication');
+		}
+		if (!awsSigningService.trim()) {
+			return $i18n.t('Signing Service is required for SigV4 authentication');
+		}
+		return null;
+	};
+
 	const verifyOpenAIHandler = async () => {
 		availableModelIds = [];
 		// remove trailing slash from url
 		url = url.replace(/\/$/, '');
+
+		const sigv4Error = missingSigv4Field();
+		if (sigv4Error) {
+			toast.error(sigv4Error);
+			return;
+		}
 
 		let _headers = null;
 
@@ -131,6 +164,7 @@
 				key,
 				config: {
 					auth_type,
+					...sigv4Config(),
 					...(!direct && !ollama ? { forward_cookies: forwardCookies } : {}),
 					...(provider ? { provider } : {}),
 					...(azure ? { azure: true } : {}),
@@ -191,6 +225,13 @@
 			return;
 		}
 
+		const sigv4Error = missingSigv4Field();
+		if (sigv4Error) {
+			loading = false;
+			toast.error(sigv4Error);
+			return;
+		}
+
 		if (azure) {
 			if (!apiVersion) {
 				loading = false;
@@ -242,6 +283,7 @@
 				model_ids: modelIds,
 				connection_type: connectionType,
 				auth_type,
+				...sigv4Config(),
 				...(!direct && !ollama ? { forward_cookies: forwardCookies } : {}),
 				headers: headers ? JSON.parse(headers) : undefined,
 				passthrough_params: parsePassthroughParams(passthroughParams),
@@ -261,6 +303,8 @@
 		key = '';
 		auth_type = 'bearer';
 		forwardCookies = false;
+		awsRegion = DEFAULT_AWS_REGION;
+		awsSigningService = DEFAULT_AWS_SIGNING_SERVICE;
 		prefixId = '';
 		passthroughParams = '';
 		showAdvanced = false;
@@ -282,6 +326,8 @@
 			key = connection.key;
 
 			auth_type = connection.config.auth_type ?? 'bearer';
+			awsRegion = connection.config?.aws_region ?? DEFAULT_AWS_REGION;
+			awsSigningService = connection.config?.aws_signing_service ?? DEFAULT_AWS_SIGNING_SERVICE;
 			headers = connection.config?.headers
 				? JSON.stringify(connection.config.headers, null, 2)
 				: '';
@@ -470,6 +516,7 @@
 												{#if !direct}
 													<option value="system_oauth">{$i18n.t('OAuth')}</option>
 													<option value="microsoft_entra_id">{$i18n.t('Entra ID')}</option>
+													<option value="sigv4">{$i18n.t('SigV4')}</option>
 												{/if}
 											{/if}
 										</select>
@@ -498,11 +545,51 @@
 											<div class={`text-xs self-center translate-y-[1px] text-gray-500`}>
 												{$i18n.t('Uses DefaultAzureCredential to authenticate')}
 											</div>
+										{:else if auth_type === 'sigv4'}
+											<div class={`text-xs self-center translate-y-[1px] text-gray-500`}>
+												{$i18n.t("Signs requests with the server's AWS credentials")}
+											</div>
 										{/if}
 									</div>
 								</div>
 							</div>
 						</div>
+
+						{#if auth_type === 'sigv4'}
+							<div class="flex gap-2 mt-2">
+								<div class="flex flex-col w-full">
+									<label for="aws-region-input" class={`mb-0.5 text-xs text-gray-500`}
+										>{$i18n.t('AWS Region')}</label
+									>
+
+									<input
+										id="aws-region-input"
+										class={`w-full text-sm ${inputClass}`}
+										type="text"
+										bind:value={awsRegion}
+										placeholder="us-east-1"
+										autocomplete="off"
+										required
+									/>
+								</div>
+
+								<div class="flex flex-col w-full">
+									<label for="aws-signing-service-input" class={`mb-0.5 text-xs text-gray-500`}
+										>{$i18n.t('Signing Service')}</label
+									>
+
+									<input
+										id="aws-signing-service-input"
+										class={`w-full text-sm ${inputClass}`}
+										type="text"
+										bind:value={awsSigningService}
+										placeholder="bedrock"
+										autocomplete="off"
+										required
+									/>
+								</div>
+							</div>
+						{/if}
 
 						{#if !ollama && !direct}
 							<div class="flex flex-row justify-between items-center w-full mt-1">

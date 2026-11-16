@@ -237,6 +237,7 @@ from open_webui.utils.chat import (
     chat_completed as chat_completed_handler,
     get_temporary_chat,
 )
+from open_webui.utils.aws_sigv4 import SigV4Error
 from open_webui.utils.chat import (
     generate_chat_completion as chat_completion_handler,
 )
@@ -565,6 +566,12 @@ app = FastAPI(
 @app.exception_handler(RecurrenceEvaluationTimeout)
 async def recurrence_timeout_handler(request: Request, exc: RecurrenceEvaluationTimeout):
     return JSONResponse(status_code=400, content={'detail': str(exc)})
+
+
+@app.exception_handler(SigV4Error)
+async def sigv4_error_handler(request: Request, exc: SigV4Error):
+    log.error('SigV4 signing failed for %s: %s', request.url.path, exc)
+    return JSONResponse(status_code=500, content={'detail': f'SigV4 signing failed: {exc}'})
 
 
 # Used by readiness checks to gate traffic until startup work is done.
